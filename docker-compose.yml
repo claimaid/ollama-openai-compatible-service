@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    volumes:
+      - ./ollama-data:/root/.ollama
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ollama-network
+
+  api-adapter:
+    build: 
+      context: ./api-adapter
+      dockerfile: Dockerfile
+    container_name: api-adapter
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST}
+      - PORT=${API_PORT}
+      - ENABLE_AUTH=${ENABLE_AUTH}
+      - API_KEY=${API_KEY}
+    ports:
+      - "${API_PORT}:${API_PORT}"
+    restart: unless-stopped
+    networks:
+      - ollama-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${API_PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  web-ui:
+    build: 
+      context: ./web-ui
+      dockerfile: Dockerfile
+    container_name: web-ui
+    depends_on:
+      api-adapter:
+        condition: service_healthy
+    environment:
+      - API_URL=http://api-adapter:${API_PORT}
+      - PORT=${WEB_PORT}
+    ports:
+      - "${WEB_PORT}:${WEB_PORT}"
+    restart: unless-stopped
+    networks:
+      - ollama-network
+
+networks:
+  ollama-network:
+    driver: bridge
